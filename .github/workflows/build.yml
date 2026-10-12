@@ -308,3 +308,30 @@ jobs:
                       noAction = (ei.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0;
                   }
                   boolean hasAction = action != EditorInfo.IME_ACTION_NONE
+                   && action != EditorInfo.IME_ACTION_UNSPECIFIED;
+                  if (!forceEnter && hasAction && !noAction) {
+                      ic.performEditorAction(action);
+                  } else {
+                      ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+                      ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
+                  }
+              }
+
+              @Override
+              public void onFinishInput() {
+                  super.onFinishInput();
+                  if (running) stop("Поле ввода закрыто");
+              }
+          }
+          EOF_8
+      - name: Build
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoNum-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: AutoNum build ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
