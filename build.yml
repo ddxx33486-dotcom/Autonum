@@ -1,0 +1,337 @@
+name: Build APK
+on: [push, workflow_dispatch]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Generate project files
+        run: |
+          cat > settings.gradle <<'EOF_1'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "AutoNum"
+          include ':app'
+          EOF_1
+          cat > build.gradle <<'EOF_2'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF_2
+          cat > gradle.properties <<'EOF_3'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          EOF_3
+          mkdir -p app
+          cat > app/build.gradle <<'EOF_4'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'com.example.autonum'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.example.autonum'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF_4
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_5'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application android:label="Авто-числа" android:allowBackup="false">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <service android:name=".NumIME"
+                      android:label="Авто-числа"
+                      android:permission="android.permission.BIND_INPUT_METHOD"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.view.InputMethod"/>
+                      </intent-filter>
+                      <meta-data android:name="android.view.im" android:resource="@xml/method"/>
+                  </service>
+              </application>
+          </manifest>
+          EOF_5
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/method.xml <<'EOF_6'
+          <?xml version="1.0" encoding="utf-8"?>
+          <input-method xmlns:android="http://schemas.android.com/apk/res/android"
+              android:settingsActivity="com.example.autonum.MainActivity" />
+          EOF_6
+          mkdir -p app/src/main/java/com/example/autonum
+          cat > app/src/main/java/com/example/autonum/MainActivity.java <<'EOF_7'
+          package com.example.autonum;
+
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.inputmethod.InputMethodManager;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  int p = (int) (16 * getResources().getDisplayMetrics().density);
+                  ScrollView sv = new ScrollView(this);
+                  LinearLayout l = new LinearLayout(this);
+                  l.setOrientation(LinearLayout.VERTICAL);
+                  l.setPadding(p, p, p, p);
+
+                  TextView t = new TextView(this);
+                  t.setTextSize(17);
+                  t.setText("Авто-числа: отправляет 993, 986, ... , 6 (142 числа) с паузой 1 сек.\n\n"
+                      + "1. Нажмите «Включить клавиатуру» и включите переключатель «Авто-числа».\n"
+                      + "2. Откройте чат в браузере и нажмите на поле ввода.\n"
+                      + "3. Нажмите «Выбрать клавиатуру» (или значок клавиатуры внизу справа) и выберите «Авто-числа».\n"
+                      + "4. Нажмите СТАРТ. Не сворачивайте браузер и не гасите экран.\n\n"
+                      + "Остановить: кнопка СТОП. Вернуть обычную клавиатуру: кнопка «Сменить клавиатуру».\n");
+                  l.addView(t);
+
+                  Button b1 = new Button(this);
+                  b1.setText("Включить клавиатуру");
+                  b1.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
+                  l.addView(b1);
+
+                  Button b2 = new Button(this);
+                  b2.setText("Выбрать клавиатуру");
+                  b2.setOnClickListener(v -> ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showInputMethodPicker());
+                  l.addView(b2);
+
+                  sv.addView(l);
+                  setContentView(sv);
+              }
+          }
+          EOF_7
+          mkdir -p app/src/main/java/com/example/autonum
+          cat > app/src/main/java/com/example/autonum/NumIME.java <<'EOF_8'
+          package com.example.autonum;
+
+          import android.graphics.Color;
+          import android.inputmethodservice.InputMethodService;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.view.Gravity;
+          import android.view.KeyEvent;
+          import android.view.View;
+          import android.view.inputmethod.EditorInfo;
+          import android.view.inputmethod.InputConnection;
+          import android.view.inputmethod.InputMethodManager;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          public class NumIME extends InputMethodService {
+              static final int START = 993;
+              static final int END = 6;
+              static final int STEP = 7;
+              static final long PAUSE_MS = 1000;
+              static final int TOTAL = 142;
+
+              private final Handler h = new Handler(Looper.getMainLooper());
+              private boolean running = false;
+              private boolean forceEnter = false;
+              private int cur = START;
+              private int sent = 0;
+              private String msg = "Нажмите на поле чата, затем СТАРТ";
+              private TextView status;
+              private Button btnStart;
+              private Button btnMode;
+
+              private int dp(int v) {
+                  return (int) (v * getResources().getDisplayMetrics().density);
+              }
+
+              @Override
+              public View onCreateInputView() {
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setBackgroundColor(Color.parseColor("#1B1B1F"));
+                  root.setPadding(dp(12), dp(12), dp(12), dp(12));
+
+                  status = new TextView(this);
+                  status.setTextColor(Color.WHITE);
+                  status.setTextSize(18);
+                  status.setGravity(Gravity.CENTER);
+                  root.addView(status, new LinearLayout.LayoutParams(-1, -2));
+
+                  btnStart = new Button(this);
+                  btnStart.setTextSize(20);
+                  btnStart.setOnClickListener(v -> {
+                      if (running) stop("Остановлено");
+                      else start();
+                  });
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(64));
+                  lp.topMargin = dp(8);
+                  root.addView(btnStart, lp);
+
+                  LinearLayout row = new LinearLayout(this);
+                  row.setOrientation(LinearLayout.HORIZONTAL);
+
+                  btnMode = new Button(this);
+                  btnMode.setTextSize(12);
+                  btnMode.setOnClickListener(v -> {
+                      forceEnter = !forceEnter;
+                      refresh();
+                  });
+
+                  Button btnReset = new Button(this);
+                  btnReset.setTextSize(12);
+                  btnReset.setText("Сначала");
+                  btnReset.setOnClickListener(v -> {
+                      stop("Сброшено");
+                      cur = START;
+                      sent = 0;
+                      msg = "Нажмите на поле чата, затем СТАРТ";
+                      refresh();
+                  });
+
+                  Button btnSwitch = new Button(this);
+                  btnSwitch.setTextSize(12);
+                  btnSwitch.setText("Сменить клавиатуру");
+                  btnSwitch.setOnClickListener(v -> {
+                      stop("Остановлено");
+                      ((InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showInputMethodPicker();
+                  });
+
+                  row.addView(btnMode, new LinearLayout.LayoutParams(0, -2, 1));
+                  row.addView(btnReset, new LinearLayout.LayoutParams(0, -2, 1));
+                  row.addView(btnSwitch, new LinearLayout.LayoutParams(0, -2, 1));
+                  root.addView(row, new LinearLayout.LayoutParams(-1, -2));
+
+                  refresh();
+                  return root;
+              }
+
+              private void refresh() {
+                  if (status == null) return;
+                  status.setText(msg + "\nОтправлено: " + sent + " из " + TOTAL);
+                  if (running) btnStart.setText("СТОП");
+                  else if (sent > 0 && cur >= END) btnStart.setText("ПРОДОЛЖИТЬ с " + cur);
+                  else btnStart.setText("СТАРТ (993 → 6)");
+                  btnMode.setText(forceEnter ? "Отправка: Enter" : "Отправка: авто");
+              }
+
+              private void start() {
+                  if (getCurrentInputConnection() == null) {
+                      msg = "Сначала нажмите на поле ввода";
+                      refresh();
+                      return;
+                  }
+                  if (cur < END) {
+                      cur = START;
+                      sent = 0;
+                  }
+                  running = true;
+                  msg = "Идёт отправка...";
+                  refresh();
+                  h.post(this::typeStep);
+              }
+
+              private void stop(String text) {
+                  running = false;
+                  h.removeCallbacksAndMessages(null);
+                  msg = text;
+                  refresh();
+              }
+
+              private void typeStep() {
+                  if (!running) return;
+                  InputConnection ic = getCurrentInputConnection();
+                  if (ic == null) {
+                      stop("Поле ввода потеряно");
+                      return;
+                  }
+                  ic.commitText(String.valueOf(cur), 1);
+                  h.postDelayed(this::sendStep, 250);
+              }
+
+              private void sendStep() {
+                  if (!running) return;
+                  InputConnection ic = getCurrentInputConnection();
+                  if (ic == null) {
+                      stop("Поле ввода потеряно");
+                      return;
+                  }
+                  pressSend(ic);
+                  sent++;
+                  cur -= STEP;
+                  if (cur < END) {
+                      running = false;
+                      msg = "Готово!";
+                      refresh();
+                      Toast.makeText(this, "Готово", Toast.LENGTH_LONG).show();
+                      return;
+                  }
+                  refresh();
+                  h.postDelayed(this::typeStep, PAUSE_MS);
+              }
+
+              private void pressSend(InputConnection ic) {
+                  EditorInfo ei = getCurrentInputEditorInfo();
+                  int action = EditorInfo.IME_ACTION_NONE;
+                  boolean noAction = false;
+                  if (ei != null) {
+                      action = ei.imeOptions & EditorInfo.IME_MASK_ACTION;
+                      noAction = (ei.imeOptions & EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0;
+                  }
+                  boolean hasAction = action != EditorInfo.IME_ACTION_NONE
+                          && action != EditorInfo.IME_ACTION_UNSPECIFIED;
+                  if (!forceEnter && hasAction && !noAction) {
+                      ic.performEditorAction(action);
+                  } else {
+                      ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
+                      ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
+                  }
+              }
+
+              @Override
+              public void onFinishInput() {
+                  super.onFinishInput();
+                  if (running) stop("Поле ввода закрыто");
+              }
+          }
+          EOF_8
+      - name: Build
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoNum-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: AutoNum build ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
